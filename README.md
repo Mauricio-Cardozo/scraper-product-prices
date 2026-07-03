@@ -1,113 +1,71 @@
-# Dropi Scraper 🐾
+# Competitive Price Monitor & Tracker
 
-Dropi y plataformas similares cargan sus catálogos dinámicamente — no se pueden scrapear con `requests` simples. Esta herramienta resuelve eso: extrae precios, stock y SKU automáticamente y los exporta listos para analizar, evitando horas de carga manual de inventario.
+**Monitor competitor prices automatically and get alerted when they change.**
 
-Si sos un negocio que revende productos de Dropi, sabés lo tedioso que es copiar precio por precio a tu planilla. Acá tenés el catálogo completo en segundos.
+If you run an e-commerce store, you need to know when your competitors or suppliers change their prices — but checking 200 products manually every week is impossible.
 
-## Capturas
+This product does it in two phases:
 
-![El scraper abre Chrome y espera el login manual con 2FA](screenshots/test-output.png)
-![Productos scrapeados desde la terminal](screenshots/terminal-output.png)
-![Catálogo exportado a Excel listo para analizar](screenshots/csv-excel.png)
+1. **Extract** — scrape product data (prices, stock, SKUs) from password-protected marketplaces using Playwright
+2. **Track** — compare snapshots over time and generate a report of what changed
 
-## ¿Cómo funciona?
+## Pipeline completo
 
-Dropi es una SPA (Single Page Application) — los datos no están en el HTML sino
-que se cargan mediante llamadas a una API REST interna. El scraper:
+```
+scraper.py  →  CSV snapshot  →  track.py  →  price change report
+```
 
-1. Abre un browser (ventana visible para login manual con 2FA)
-2. Autocompleta email y contraseña desde `.env` (si están configurados)
-3. Captura el token `Bearer` interceptando las respuestas de la API
-4. Navega cada categoría y fetchea productos via la API interna
-5. Exporta todo a **CSV y JSON**
-
-## Instalación
+## Quick start
 
 ```bash
-# 1. Crear entorno virtual (recomendado)
-python -m venv venv
-source venv/bin/activate        # Linux/Mac
-venv\Scripts\activate           # Windows
+# Phase 1: Extraer productos
+cp .env.example .env          # editá credenciales
+playwright install chromium   # primera vez
+python scraper.py             # genera output/dropi_<fecha>.csv
 
-# 2. Instalar dependencias
-pip install -r requirements.txt
-
-# 3. Instalar el browser de Playwright
-playwright install chromium
+# Phase 2: Detectar cambios contra el snapshot anterior
+python track.py output/dropi_20260614_235254.csv
 ```
 
-## Configuración
+## Phase 1 — Extracción (scraper.py)
 
-Copiá `.env.example` a `.env` y completá tus credenciales:
+Scrapea marketplaces tipo Dropi que cargan catálogos dinámicamente vía API:
+
+1. Abre browser visible para login manual con 2FA
+2. Captura el token Bearer interceptando la API
+3. Navega categorías y exporta a CSV y JSON
+
+## Phase 2 — Tracking (track.py)
+
+Compara dos snapshots de precios y muestra qué cambió:
 
 ```bash
-cp .env.example .env
+python track.py output/dropi_20260614_235254.csv
 ```
 
+Output:
 ```
-EMAIL=tu_email@ejemplo.com
-PASSWORD=tu_password
-```
-
-> `.env` está en `.gitignore` — no se sube al repo.
-
-Las categorías a scrapear se editan directo en `scraper.py`:
-
-```python
-CATEGORIAS = [
-    "Mascotas",
-    # "Electrónica",
-    # "Hogar",
-]
+=== PRICE CHANGES DETECTED ===
+Product                  | Old      | New      | Change
+Cepillo Automatico       | $8000    | $8500    | +$500 🔺
+Cama Perro Grande        | $15000   | $14200   | -$800 🔻
 ```
 
-## Uso
+También genera un historial en SQLite para trackear tendencias a largo plazo.
+
+## Uso típico
 
 ```bash
+# Lunes: extraer precios
 python scraper.py
+
+# Comparar con el lunes anterior
+python track.py output/dropi_20260614_235254.csv
+
+# Automatico con cron (Linux/Mac)
+0 9 * * 1 cd /ruta/proyecto && python scraper.py && python track.py output/$(ls -t output/*.csv | head -1)
 ```
 
-Los archivos se guardan en la carpeta `output/`:
-- `dropi_YYYYMMDD_HHMMSS.csv`
-- `dropi_YYYYMMDD_HHMMSS.json`
+---
 
-## Estructura del CSV
-
-| Campo | Descripción |
-|---|---|
-| id | ID interno del producto en Dropi |
-| nombre | Nombre del producto |
-| precio_dropshipping | Precio dropshipping |
-| precio_sugerido | Precio sugerido de venta |
-| stock | Unidades disponibles |
-| categoria | Categoría scrapeada |
-| sku | SKU del producto |
-| marca | Marca |
-| url | Link directo al producto |
-| fecha_scraping | Timestamp del scraping |
-
-### Ejemplo real (output/dropi_20260614_235254.csv)
-
-```csv
-id,nombre,precio_dropshipping,precio_sugerido,stock,categoria,sku,marca,url,fecha_scraping
-11074,Cepillo Automatico A Vapor Quita Pelos,0,8000,N/A,Mascotas,,,https://app.dropi.ar/dashboard/product-details/11074/,2026-06-14 23:52:53
-11090,Guante Quita Pelos Mascotas,0,8540,N/A,Mascotas,MAyK 00135,,https://app.dropi.ar/dashboard/product-details/11090/,2026-06-14 23:52:53
-11089,Manopla Quita Pelos Mascotas,0,8540,N/A,Mascotas,MAyK 00134,,https://app.dropi.ar/dashboard/product-details/11089/,2026-06-14 23:52:53
-1837,Corral Plegable para Mascotas (CHICA),0,1,N/A,Mascotas,Fordablepetplayten,,https://app.dropi.ar/dashboard/product-details/1837/,2026-06-14 23:52:53
-```
-
-## Presentación del catálogo
-
-Para obtener un CSV limpio listo para compartir (ordenado alfabéticamente, sin columnas vacías):
-
-```bash
-python clean_csv.py
-```
-
-Toma el último CSV generado y produce `output/dropi_*_clean.csv` con solo las columnas útiles: nombre, precio sugerido, SKU, categoría, URL y fecha.
-
-## Tips
-
-- **Sin headless**: El browser se abre visible (`headless=False`) para resolver 2FA manualmente
-- **Velocidad**: Ajustá los `asyncio.sleep()` si querés ir más rápido (con cuidado de no ser bloqueado)
-- **Múltiples categorías**: Agregá todas las que necesites en `CATEGORIAS`
+**Tech stack:** Python · Playwright · SQLite · httpx
